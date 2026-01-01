@@ -1,6 +1,6 @@
 <div align="center">
 
-# Polymarket Data
+<h1>Polymarket Data</h1>
 
 <h3>Complete Data Infrastructure for Polymarket — Fetch, Process, Analyze</h3>
 
