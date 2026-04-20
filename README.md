@@ -45,7 +45,8 @@
 ---
 
 ## 📊 数据集
-
+![alt text](image.png)
+![alt text](image-1.png)
 ### 数据规模
 
 | 文件 | 大小 | 记录数 | 说明 |
@@ -112,6 +113,7 @@ hf download SII-WANGZJ/Polymarket_data quant.parquet --repo-type dataset
 
 ---
 
+![alt text](image-2.png)
 ## 📈 量化分析
 
 ### 01. 数据验证
@@ -149,7 +151,7 @@ python 02_market_overview.py
 ```bash
 python 03_second_level_price.py
 ```
-
+![alt text](image-3.png)
 **关键发现**：
 
 | 时间点 | UP赢市场均价 | DOWN赢市场均价 |
