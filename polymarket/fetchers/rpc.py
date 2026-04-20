@@ -11,7 +11,7 @@ from web3 import Web3
 from web3.middleware import ExtraDataToPOAMiddleware
 
 from ..config import (
-    POLYGON_RPC_URL, get_rpc_url, BLOCKS_PER_BATCH, REQUEST_DELAY,
+    POLYGON_RPC_URL, get_rpc_url, get_all_rpc_urls, BLOCKS_PER_BATCH, REQUEST_DELAY,
     POLYMARKET_CONTRACTS, EVENT_SIGNATURES, ORDER_FILLED_TOPIC
 )
 
@@ -19,23 +19,50 @@ logger = logging.getLogger(__name__)
 
 
 class PolygonRpcClient:
-    """Polygon RPC 客户端"""
+    """Polygon RPC 客户端（支持多端点重试）"""
 
     # Polygon 出块时间约 2 秒
     BLOCK_TIME = 2
 
     def __init__(self, use_alchemy: bool = False):
-        rpc_url = get_rpc_url(use_alchemy)
-        self.w3 = Web3(Web3.HTTPProvider(rpc_url))
-        # Polygon 是 POA 链，需要添加中间件处理 extraData 字段
-        self.w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
+        self.rpc_urls = get_all_rpc_urls()
+        self.current_rpc_index = 0
+        self._connect()
         # web3.py 要求 checksum 地址格式
         self.contract_addresses = [Web3.to_checksum_address(addr) for addr in POLYMARKET_CONTRACTS.values()]
         self._timestamp_cache: Dict[int, int] = {}
-        logger.info(f"RPC 连接: {rpc_url.split('/v2/')[0] if '/v2/' in rpc_url else rpc_url}")
+        rpc_display = self.current_rpc_url.split('/v2/')[0] if '/v2/' in self.current_rpc_url else self.current_rpc_url
+        logger.info(f"RPC 连接: {rpc_display}")
+
+    def _connect(self):
+        """连接到当前 RPC 端点"""
+        self.current_rpc_url = self.rpc_urls[self.current_rpc_index]
+        self.w3 = Web3(Web3.HTTPProvider(self.current_rpc_url))
+        # Polygon 是 POA 链，需要添加中间件处理 extraData 字段
+        self.w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
+
+    def _try_with_fallback(self, func, *args, **kwargs):
+        """带回退机制的函数调用"""
+        last_error = None
+        for i in range(len(self.rpc_urls)):
+            try:
+                if i > 0 and i != self.current_rpc_index:
+                    # 切换到备用端点
+                    self.current_rpc_index = i
+                    self._connect()
+                    rpc_display = self.current_rpc_url.split('/v2/')[0] if '/v2/' in self.current_rpc_url else self.current_rpc_url
+                    logger.warning(f"切换到备用 RPC: {rpc_display}")
+                
+                return func(*args, **kwargs)
+            except Exception as e:
+                last_error = e
+                logger.warning(f"RPC 请求失败 (尝试 {i+1}/{len(self.rpc_urls)}): {e}")
+                continue
+        
+        raise last_error
 
     def get_latest_block(self) -> int:
-        return self.w3.eth.block_number
+        return self._try_with_fallback(lambda: self.w3.eth.block_number)
 
     def get_logs(self, start_block: int, end_block: int) -> Optional[List[Dict[str, Any]]]:
         """获取区块范围内的 OrderFilled 日志

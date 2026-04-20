@@ -47,7 +47,18 @@ TEMP_DIR = DATA_DIR / 'temp'
 # ============== 区块链 ==============
 
 POLYGON_CHAIN_ID = 137
-POLYGON_RPC_URL = 'https://polygon-rpc.com'
+
+# 公共 RPC 端点列表（按优先级排序）
+# polygon-rpc.com 现在需要 API 密钥，所以使用其他公共端点
+POLYGON_RPC_URLS = [
+    'https://polygon-mainnet.public.blastapi.io',
+    'https://rpc.ankr.com/polygon',
+    'https://polygon.drpc.org',
+    'https://1rpc.io/matic',
+]
+
+# 默认使用第一个可用的
+POLYGON_RPC_URL = POLYGON_RPC_URLS[0]
 
 
 def get_rpc_url(use_alchemy: bool = False) -> str:
@@ -57,6 +68,13 @@ def get_rpc_url(use_alchemy: bool = False) -> str:
         if api_key:
             return f'https://polygon-mainnet.g.alchemy.com/v2/{api_key}'
     return POLYGON_RPC_URL
+
+
+def get_all_rpc_urls() -> list:
+    """获取所有可用的 RPC URL 列表（用于重试）"""
+    if use_alchemy := os.getenv('ALCHEMY_API_KEY', ''):
+        return [f'https://polygon-mainnet.g.alchemy.com/v2/{use_alchemy}']
+    return POLYGON_RPC_URLS
 
 
 # ============== API ==============

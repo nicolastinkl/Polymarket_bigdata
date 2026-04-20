@@ -20,6 +20,7 @@ from pathlib import Path
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pyarrow.compute as pc
 
 from ..config import (
     DATA_DIR, LOG_DIR, STATE_FILE,
@@ -190,10 +191,11 @@ def cmd_fetch_onchain(args):
 
     logger.info(f"获取区块 {start} - {end} (共 {end - start + 1} 个区块)")
 
-    # 创建目录
+    # 创建目录（跳过符号链接）
     DATASET_DIR.mkdir(parents=True, exist_ok=True)
     LATEST_RESULT_DIR.mkdir(parents=True, exist_ok=True)
-    DATA_CLEAN_DIR.mkdir(parents=True, exist_ok=True)
+    if not DATA_CLEAN_DIR.is_symlink():
+        DATA_CLEAN_DIR.mkdir(parents=True, exist_ok=True)
 
     # 加载 token 映射（用于生成 trades）
     token_mapping = load_token_mapping(MARKETS_FILE)
@@ -517,14 +519,49 @@ def cmd_fetch_markets(args):
         if new_markets:
             logger.info(f"保存 {len(new_markets)} 个新市场...")
             new_df = pd.DataFrame(new_markets)
+            
+            # 确保数值列类型正确
+            numeric_cols = ['volume']
+            for col in numeric_cols:
+                if col in new_df.columns:
+                    new_df[col] = pd.to_numeric(new_df[col], errors='coerce')
+            
+            # 确保时间戳列类型正确（修复 created_at, end_date, updated_at 等字段）
+            datetime_cols = ['created_at', 'end_date', 'updated_at']
+            for col in datetime_cols:
+                if col in new_df.columns:
+                    new_df[col] = pd.to_datetime(new_df[col], errors='coerce', utc=True)
+            
+            # 确保布尔/整型列类型正确
+            bool_cols = ['closed', 'active', 'archived', 'neg_risk']
+            for col in bool_cols:
+                if col in new_df.columns:
+                    new_df[col] = pd.to_numeric(new_df[col], errors='coerce').fillna(0).astype('UInt8')
 
             if MARKETS_FILE.exists():
-                # 追加到已有文件
-                existing_table = pq.read_table(MARKETS_FILE)
-                new_table = pa.Table.from_pandas(new_df, preserve_index=False)
-                combined = pa.concat_tables([existing_table, new_table])
-                pq.write_table(combined, MARKETS_FILE, compression='snappy')
-                del existing_table, combined
+                # markets 文件只有 116MB，用 pandas 读写更稳定
+                existing_df = pd.read_parquet(MARKETS_FILE)
+                
+                # 确保 existing_df 也有正确的时间类型
+                for col in datetime_cols:
+                    if col in existing_df.columns and not pd.api.types.is_datetime64_any_dtype(existing_df[col]):
+                        existing_df[col] = pd.to_datetime(existing_df[col], errors='coerce', utc=True)
+                
+                combined_df = pd.concat([existing_df, new_df], ignore_index=True)
+                
+                # 再次确保合并后的类型正确
+                for col in numeric_cols:
+                    if col in combined_df.columns:
+                        combined_df[col] = pd.to_numeric(combined_df[col], errors='coerce')
+                for col in datetime_cols:
+                    if col in combined_df.columns and not pd.api.types.is_datetime64_any_dtype(combined_df[col]):
+                        combined_df[col] = pd.to_datetime(combined_df[col], errors='coerce', utc=True)
+                for col in bool_cols:
+                    if col in combined_df.columns:
+                        combined_df[col] = pd.to_numeric(combined_df[col], errors='coerce').fillna(0).astype('UInt8')
+                
+                combined_df.to_parquet(MARKETS_FILE, index=False, compression='snappy')
+                del existing_df, combined_df
             else:
                 new_df.to_parquet(MARKETS_FILE, index=False)
 
